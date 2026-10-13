@@ -929,6 +929,12 @@ modal-element .modal-cancel-button:hover {
 		color: #8a94a6;
 	}
 
+	// AI 大模型直答：不需要 HEAD 探测，用中性蓝与「失败」的红、成功的绿区分开
+	&.llm {
+		background-color: #eef2fb;
+		color: #3a6ea5;
+	}
+
 	// 延迟标签：固定中性灰，与状态标签区分
 	&.latency {
 		background-color: #eef2f7;

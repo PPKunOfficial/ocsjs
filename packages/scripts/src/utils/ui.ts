@@ -68,8 +68,11 @@ export interface AnswererListHandlers {
 /** 展开箭头 SVG（代替 details/summary 的默认箭头，旋转动画由 CSS 控制） */
 const CHEVRON_SVG = `<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 
-/** 题库连接状态 */
-export type AnswererProbeStatus = 'success' | 'disabled' | 'error' | 'timeout' | 'invalid';
+/**
+ * 题库连接状态
+ * - llm：AI 大模型直答配置，url 是 POST 接口，HEAD/GET 探测没有意义，故跳过探测
+ */
+export type AnswererProbeStatus = 'success' | 'disabled' | 'error' | 'timeout' | 'invalid' | 'llm';
 
 /** 题库延迟探测结果 */
 export interface AnswererProbeResult {
@@ -90,6 +93,15 @@ export interface AnswererProbeResult {
 export async function probeAnswerer(item: AnswererWrapper, disabled: boolean): Promise<AnswererProbeResult> {
 	if (disabled) {
 		return { status: 'disabled' };
+	}
+	/**
+	 * AI 大模型直答配置（wrapper.llm）跳过探测：
+	 * 它的 url 是 POST 接口（/chat/completions、/messages、/systemone 等），不带鉴权的
+	 * HEAD/GET 请求只会被网关拒绝（401/403/404/405/451 等），据此显示「连接失败」纯属误导
+	 * ——答题时才会带 API Key 真正发起请求。连通性请在「题库配置 → AI 大模型 → 测试连接」验证。
+	 */
+	if (item.llm) {
+		return { status: 'llm' };
 	}
 	let probeUrl: URL;
 	try {
@@ -144,6 +156,8 @@ function formatProbeStatus(r: AnswererProbeResult): string {
 			return '已停用';
 		case 'invalid':
 			return '配置错误';
+		case 'llm':
+			return 'AI 大模型（跳过探测）';
 	}
 }
 
@@ -188,6 +202,8 @@ export function createAnswererWrapperList(aw: AnswererWrapper[], handlers: Answe
 					? '连接失败' + (r.error?.message ? `：${r.error.message}` : '')
 					: r.status === 'timeout'
 					? '连接超时（>10秒）'
+					: r.status === 'llm'
+					? '此配置为 AI 大模型直接答题：答题时会带 API Key 真实发起请求，因此这里不做 HEAD 探测。请在「题库配置 → 解析器选 AI 大模型 → 测试连接」验证连通性'
 					: '题库配置 URL 无法解析';
 		};
 		/** 发起延迟探测（列表渲染 / 题库变更 / 重新启用时自动调用） */

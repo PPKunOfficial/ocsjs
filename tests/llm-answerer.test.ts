@@ -1715,8 +1715,87 @@ async function main() {
 		}
 	}
 
+	// ------------------------------------------------------------------ L
+	section('L. probeAnswerer —— AI 大模型配置不再做无意义的 HEAD 探测（避免误报 404/401）');
+	{
+		const g: any = globalThis as any;
+		let uiModule: any;
+		try {
+			uiModule = await import('../packages/scripts/src/utils/ui');
+		} catch (err: any) {
+			MISSING.push(`ui 模块导入失败：${err?.message ?? err}`);
+		}
+		if (!uiModule || typeof uiModule.probeAnswerer !== 'function') {
+			skipCheck('L 组', 'probeAnswerer 未导出');
+		} else {
+			/**
+			 * 回归背景：LLM 配置的 url 是 POST 接口（/chat/completions 等），
+			 * 题库列表用不带鉴权的 HEAD/GET 探测它必然被拒绝（401/403/404/405/451），
+			 * 于是「测试连接成功、保存后卡片却显示连接失败（404）」——用户看到的正是这个。
+			 */
+			const llmWrapper: any = {
+				name: 'AI 大模型（deepseek-chat）',
+				url: 'https://api.deepseek.com/v1/chat/completions',
+				homepage: 'https://api.deepseek.com',
+				handler: 'return (res) => []',
+				method: 'post',
+				type: 'GM_xmlhttpRequest',
+				contentType: 'json',
+				data: {},
+				llm: {
+					apiFormat: 'completions',
+					baseUrl: 'https://api.deepseek.com/v1',
+					model: 'deepseek-chat',
+					apiKey: 'sk-offline-test'
+				}
+			};
+			const legacyWrapper: any = { ...llmWrapper };
+			delete legacyWrapper.llm;
+
+			const calls: any[] = [];
+			const originalGm = g.GM_xmlhttpRequest;
+			g.GM_xmlhttpRequest = (opts: any) => {
+				calls.push(opts);
+				return undefined;
+			};
+
+			try {
+				await checkAsync('L1 LLM 配置直接返回 llm 状态，且不发任何探测请求', async () => {
+					const r = await uiModule.probeAnswerer(llmWrapper, false);
+					assert(r.status === 'llm', `状态应为 llm，实际 ${r.status}`);
+					assert(calls.length === 0, `不应发起探测请求，实际发起 ${calls.length} 次`);
+				});
+
+				await checkAsync('L2 停用的 LLM 配置仍优先显示「已停用」（探测分支不被绕过）', async () => {
+					const r = await uiModule.probeAnswerer(llmWrapper, true);
+					assert(r.status === 'disabled', `状态应为 disabled，实际 ${r.status}`);
+					assert(calls.length === 0, `停用不应发起请求，实际 ${calls.length} 次`);
+				});
+
+				// 对照组：传统题库仍照常探测（桩返回 404 → error），证明跳过逻辑只针对 LLM 配置
+				g.GM_xmlhttpRequest = (opts: any) => {
+					calls.push(opts);
+					setTimeout(() => opts.onload && opts.onload({ status: 404, responseText: '' }), 0);
+				};
+				await checkAsync('L3 传统题库仍照常探测（404 → error），跳过只作用于 LLM 配置', async () => {
+					const r = await uiModule.probeAnswerer(legacyWrapper, false);
+					assert(calls.length === 1, `应发起 1 次探测，实际 ${calls.length} 次`);
+					assert(
+						calls[0] && String(calls[0].method).toLowerCase() === 'head',
+						`应使用 HEAD 探测，实际 ${calls[0]?.method}`
+					);
+					assert(r.status === 'error' && r.statusCode === 404, `应得到 error/404，实际 ${r.status}/${r.statusCode}`);
+				});
+			} finally {
+				if (originalGm === undefined) delete g.GM_xmlhttpRequest;
+				else g.GM_xmlhttpRequest = originalGm;
+			}
+		}
+	}
+
 	// ---------------------------------------------------------------- 汇总
-	console.log('\n================ 分组统计 ================');	for (const [name, s] of Object.entries(groups)) {
+	console.log('\n================ 分组统计 ================');
+	for (const [name, s] of Object.entries(groups)) {
 		console.log(`  ${name.slice(0, 46).padEnd(48)} ✅ ${s.pass}  ❌ ${s.fail}  ⏭️ ${s.skip}`);
 	}
 
