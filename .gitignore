@@ -94,6 +94,8 @@ web_modules/
 
 # answerer test config (contains real tokens — keep the *.example.json tracked)
 answerer.config.json
+# LLM 答题在线测试配置（内含明文 API Key —— 保留 *.example.json 入库，真实配置不入库）
+llm-answerer.live.config.json
 
 # parcel-bundler cache (https://parceljs.org/)
 .cache

@@ -19,6 +19,11 @@ export function request<T extends 'json' | 'text'>(
 		 * 不传时保持原行为（GM 分支仅 200 resolve，fetch 分支不校验状态码）。
 		 */
 		anyStatus?: boolean;
+		/**
+		 * 超时时间（毫秒）：超时后 reject，错误信息为中文「请求超时（...ms）」。
+		 * fetch 分支使用 AbortController，GM 分支使用 GM_xmlhttpRequest 自带的 timeout。
+		 */
+		timeout?: number;
 	}
 ): Promise<T extends 'json' ? any : string> {
 	return new Promise((resolve, reject) => {
@@ -45,6 +50,10 @@ export function request<T extends 'json' | 'text'>(
 						data: requestData,
 						headers: Object.keys(headers).length ? headers : undefined,
 						responseType: responseType === 'json' ? 'json' : undefined,
+						timeout: opts.timeout,
+						ontimeout: () => {
+							reject(new Error(`请求超时（${opts.timeout}ms）`));
+						},
 						onload: (response) => {
 							if (opts.anyStatus) {
 								resolve({ status: response.status, responseText: response.responseText || '' } as any);
@@ -61,7 +70,8 @@ export function request<T extends 'json' | 'text'>(
 									resolve(response.responseText || '');
 								}
 							} else {
-								reject(response.responseText);
+								const bodyText = response.responseText || '';
+								reject(new Error('HTTP ' + response.status + (bodyText ? ': ' + bodyText.slice(0, 500) : '')));
 							}
 						},
 						onerror: (err) => {
@@ -75,24 +85,82 @@ export function request<T extends 'json' | 'text'>(
 			} else {
 				const fet: typeof fetch = env === 'node' ? require('node-fetch').default : fetch;
 
-				fet(url, { body: method === 'post' ? JSON.stringify(data) : undefined, method, headers })
+				/** 超时控制：超时后中止请求 */
+				const controller = opts.timeout ? new AbortController() : undefined;
+				const timer = controller ? setTimeout(() => controller.abort(), opts.timeout) : undefined;
+				const clearTimer = () => {
+					if (timer !== undefined) clearTimeout(timer);
+				};
+
+				fet(url, {
+					body: method === 'post' ? JSON.stringify(data) : undefined,
+					method,
+					headers,
+					signal: controller ? controller.signal : undefined
+				})
 					.then((response) => {
 						if (opts.anyStatus) {
 							response
 								.text()
-								.then((text) => resolve({ status: response.status, responseText: text } as any))
-								.catch(reject);
+								.then((text) => {
+									clearTimer();
+									resolve({ status: response.status, responseText: text } as any);
+								})
+								.catch((error) => {
+									clearTimer();
+									reject(error);
+								});
+							return;
+						}
+						if (response.status >= 400) {
+							// 把状态码与响应体写进错误信息，方便上层识别 400 / 422 等具体错误
+							response
+								.text()
+								.then((bodyText) => {
+									clearTimer();
+									reject(new Error('HTTP ' + response.status + (bodyText ? ': ' + bodyText.slice(0, 500) : '')));
+								})
+								.catch(() => {
+									clearTimer();
+									reject(new Error('HTTP ' + response.status));
+								});
 							return;
 						}
 						if (responseType === 'json') {
-							response.json().then(resolve).catch(reject);
+							response
+								.json()
+								.then((res) => {
+									clearTimer();
+									resolve(res);
+								})
+								.catch((error) => {
+									clearTimer();
+									reject(error);
+								});
 						} else {
-							// @ts-ignore
-							response.text().then(resolve).catch(reject);
+							response
+								.text()
+								.then((res) => {
+									clearTimer();
+									resolve(res as any);
+								})
+								.catch((error) => {
+									clearTimer();
+									reject(error);
+								});
 						}
 					})
 					.catch((error) => {
-						reject(new Error(error));
+						clearTimer();
+						const aborted =
+							!!opts.timeout &&
+							!!error &&
+							(error.name === 'AbortError' || String(error).toLowerCase().indexOf('abort') >= 0);
+						if (aborted) {
+							reject(new Error(`请求超时（${opts.timeout}ms）`));
+						} else {
+							reject(new Error(error));
+						}
 					});
 			}
 		} catch (error) {

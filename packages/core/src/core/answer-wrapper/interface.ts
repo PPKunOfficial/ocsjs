@@ -21,6 +21,80 @@ export interface SearchInformation {
 	error?: string;
 }
 
+/** LLM 接口格式 */
+export type LLMApiFormat =
+	/** OpenAI 兼容的 Chat Completions：POST {baseUrl}/chat/completions */
+	| 'completions'
+	/** OpenAI Responses API：POST {baseUrl}/responses */
+	| 'response'
+	/** Anthropic Messages API：POST {baseUrl}/messages */
+	| 'anthropic'
+	/**
+	 * TypeSafe System One / Jev：POST {baseUrl}/systemone
+	 *
+	 * 非生成式接口：只对题目做类型化判断（选择题 / 判断题 / 多选逐项判定），
+	 * 不生成自由文本，也不支持图片、流式与思考参数。
+	 */
+	| 'systemone';
+
+/** LLM 思考（推理）参数 */
+export interface LLMReasoningConfig {
+	/** 是否开启思考（默认 false） */
+	enabled?: boolean;
+	/**
+	 * 思考强度：low / medium / high / minimal / none
+	 * - completions 映射 reasoning_effort
+	 * - response 映射 reasoning.effort
+	 * - anthropic 忽略（使用 budgetTokens）
+	 */
+	effort?: string;
+	/** 思考预算 token 数（anthropic 必填，默认 2048） */
+	budgetTokens?: number;
+	/**
+	 * 接口不支持思考参数时（HTTP 400）自动去掉思考参数重试一次（默认 true）
+	 */
+	fallback?: boolean;
+}
+
+/**
+ * LLM 答题配置（挂在 AnswererWrapper.llm 上）
+ *
+ * 配置了该字段的题库不再走「题库搜索」逻辑，而是直接调用大模型接口答题，
+ * 四种接口格式与思考/非思考模型均支持，实现见 llm-answerer.adapter.ts。
+ */
+export interface LLMAnswererConfig {
+	/** 接口格式 */
+	apiFormat: LLMApiFormat;
+	/** 接口基地址，例如 https://api.openai.com/v1（可含 ${apiKey} 占位符） */
+	baseUrl: string;
+	/** 模型名称，例如 gpt-4o-mini / claude-sonnet-4-5 / deepseek-chat */
+	model: string;
+	/** API 密钥（以 Bearer 方式发送，anthropic 自动改为 x-api-key） */
+	apiKey: string;
+	/** 请求路径覆盖（默认按 apiFormat 推导） */
+	endpoint?: string;
+	/** 系统提示词（支持 ${title} / ${options} / ${type} 占位符） */
+	systemPrompt?: string;
+	/** 用户提示词模板（支持 ${title} / ${options} / ${type} 占位符，省略时由适配器按题面自动拼装） */
+	userPrompt?: string;
+	/** 是否把图片（env.images，data URL）作为多模态图片发送（默认 false） */
+	images?: boolean;
+	/** 最大输出 token 数（默认 1024） */
+	maxTokens?: number;
+	/** 采样温度（默认 0.3；anthropic 开启思考时必须为 1，由适配器处理） */
+	temperature?: number;
+	/** 思考模型配置 */
+	reasoning?: LLMReasoningConfig;
+	/** systemone 多选判定阈值：noul ≥ 该值的选项视为正确答案（默认 0.5） */
+	noulThreshold?: number;
+	/** 最低置信度（仅 systemone 等返回 confidence 的格式）：低于该值不自动作答（0 / 未设置 = 不校验） */
+	minConfidence?: number;
+	/**
+	 * 请求方式：默认 GM_xmlhttpRequest（跨域），脚本管理器不可用时自动降级 fetch（需接口允许 CORS）
+	 */
+	type?: 'fetch' | 'GM_xmlhttpRequest';
+}
+
 /**
  * 题库配置器
  */
@@ -69,4 +143,13 @@ export interface AnswererWrapper {
 	 *
 	 */
 	handler: string;
+	/**
+	 * LLM 答题配置：配置后该题库走大模型答题（忽略 url / data / handler 的请求逻辑）
+	 */
+	llm?: LLMAnswererConfig;
+	/**
+	 * 单题库超时时间（秒）：不传时使用 {@link AnswerWrapperHandlerConfig.timeout_seconds}
+	 * 思考模型耗时较长，可单独调大
+	 */
+	timeout?: number;
 }

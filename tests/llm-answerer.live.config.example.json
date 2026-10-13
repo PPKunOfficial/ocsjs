@@ -1,0 +1,18 @@
+{
+	"presetId": "deepseek",
+	"baseUrl": "https://api.deepseek.com/v1",
+	"apiKey": "sk-REPLACE_WITH_YOUR_REAL_API_KEY",
+	"model": "deepseek-chat",
+	"apiFormat": "completions",
+	"reasoning": false,
+	"reasoningEffort": "medium",
+	"budgetTokens": 2048,
+	"images": false,
+	"title": "1 + 1 = ?",
+	"options": "A. 1\nB. 2\nC. 3\nD. 4",
+	"type": "single",
+	"maxTokens": 1024,
+	"temperature": 0.3,
+	"timeoutSeconds": 60,
+	"expected": "B"
+}

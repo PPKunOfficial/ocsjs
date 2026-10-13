@@ -4,7 +4,9 @@ import {
 	AnswerWrapperParser,
 	SimplifyWorkResult,
 	WorkUploadType,
-	AnswerWrapperHandlerConfig
+	AnswerWrapperHandlerConfig,
+	LLMRequestError,
+	requestLLMAnswerer
 } from '@ocsjs/core';
 import { $message, h, $gm, $store, Project, Script, $modal, $ui, MessageElement, cors } from 'easy-us';
 import type { AnswererWrapper } from '@ocsjs/core';
@@ -21,6 +23,8 @@ import {
 import { getAnswererConfigProvider, openAnswererConnect, waitForAnswererConfig } from '../utils/answerer-connect';
 import { confirmRiskyAnswerWrappers } from '../utils/answer-wrapper-security';
 import { initEdgeMinimize } from '../utils/edge-minimize';
+import { buildLLMWrapper, isLLMWrapper, parseLLMWrapper } from '../utils/llm-answerer-presets';
+import { createLLMAnswererForm, type LLMAnswererFormValue } from '../utils/llm-answerer-ui';
 import {
 	createAnswererWrapperSection,
 	createSteps,
@@ -274,6 +278,14 @@ export const CommonProject = Project.create({
 													'大学生网课题库接口适配器: 将不同的题库整合为一个API接口。详细查看 https://github.com/DokiDoki1103/tikuAdapter'
 											},
 											'TikuAdapter'
+										),
+										h(
+											'option',
+											{
+												title:
+													'使用 AI 大模型（OpenAI / Anthropic / Jev 等）直接答题，支持 completions、responses、anthropic messages、systemone（System One / Jev）四种接口格式与思考模型。上方文本框不参与此模式。'
+											},
+											'AI 大模型'
 										)
 									]
 								)
@@ -562,113 +574,293 @@ export const CommonProject = Project.create({
 								textarea,
 								h('div', { style: { marginTop: '12px', fontSize: '12px' } }, [
 									// 解析器选项独占一行
-									h('div', { style: { marginBottom: '12px' } }, ['解析器：', select]),
-									// 清空题库配置左对齐，关闭/保存配置右对齐
-									h('div', { style: { display: 'flex', flexWrap: 'wrap', justifyContent: 'flex-end' } }, [
-										h('button', '清空题库配置', (btn) => {
-											btn.className = 'modal-cancel-button';
-											enlargeFooterButton(btn);
-											btn.style.marginRight = 'auto';
-											btn.onclick = () => clearAnswererConfig();
-										}),
-										h('button', '关闭', (btn) => {
-											btn.className = 'modal-cancel-button';
-											enlargeFooterButton(btn);
-											btn.style.marginRight = '12px';
-											btn.onclick = () => modal?.remove();
-										}),
-										h('button', '保存配置', (btn) => {
-											btn.className = 'modal-confirm-button';
-											enlargeFooterButton(btn);
-											btn.onclick = async () => {
-												const value = textarea.value;
+									h('div', { style: { marginBottom: '12px' } }, ['解析器：', select])
+								])
+							]);
 
-												if (!value) {
-													$modal.alert({
-														content: h('div', '不能为空！')
-													});
-													return;
+							/** 手动配置底部按钮行：清空题库配置左对齐，关闭/保存配置右对齐（AI 模式下改用表单内按钮） */
+							const manualButtons = h('div', {
+								style: { display: 'flex', flexWrap: 'wrap', justifyContent: 'flex-end' }
+							});
+							const manualButtonList: HTMLElement[] = [
+								h('button', '清空题库配置', (btn) => {
+									btn.className = 'modal-cancel-button';
+									enlargeFooterButton(btn);
+									btn.style.marginRight = 'auto';
+									btn.onclick = () => clearAnswererConfig();
+								}),
+								h('button', '关闭', (btn) => {
+									btn.className = 'modal-cancel-button';
+									enlargeFooterButton(btn);
+									btn.style.marginRight = '12px';
+									btn.onclick = () => modal?.remove();
+								}),
+								h('button', '保存配置', (btn) => {
+									btn.className = 'modal-confirm-button';
+									enlargeFooterButton(btn);
+									btn.onclick = async () => {
+										const value = textarea.value;
+
+										if (select.value === 'AI 大模型') {
+											$modal.alert({
+												content: h('div', [
+													'当前解析器为 ',
+													h('b', 'AI 大模型'),
+													'，请使用下方「💾 保存配置」按钮保存，或切换解析器后再保存文本框内容。'
+												])
+											});
+											return;
+										}
+
+										if (!value) {
+											$modal.alert({
+												content: h('div', '不能为空！')
+											});
+											return;
+										}
+										if (value.includes('adapter-service/search') && (select.value === 'TikuAdapter') === false) {
+											$modal.alert({
+												content: h('div', [
+													'检测到您可能正在使用 ',
+													h('a', { href: 'https://github.com/DokiDoki1103/tikuAdapter#readme' }, 'TikuAdapter 题库'),
+													'，但是您选择的解析器不是 TikuAdapter，请选择 TikuAdapter 解析器，并填写接口地址即可，例如：http://localhost:8060/adapter-service/search，或者忽略此警告。'
+												]),
+												confirmButtonText: '切换至 TikuAdapter 解析器，并识别接口地址',
+												onConfirm() {
+													const origin = textarea.value.match(/http:\/\/(.+)\/adapter-service\/search/)?.[1] || '';
+													textarea.value = `http://${origin}/adapter-service/search`;
+													select.value = 'TikuAdapter';
 												}
-												if (value.includes('adapter-service/search') && (select.value === 'TikuAdapter') === false) {
+											});
+											return;
+										}
+
+										try {
+											const awsResult: AnswererWrapper[] = [];
+											if (select.value === 'TikuAdapter') {
+												if (value.startsWith('http') === false) {
 													$modal.alert({
 														content: h('div', [
-															'检测到您可能正在使用 ',
+															'格式错误，TikuAdapter解析器只能解析 url 链接，请重新输入！或者查看：',
 															h(
 																'a',
 																{ href: 'https://github.com/DokiDoki1103/tikuAdapter#readme' },
-																'TikuAdapter 题库'
-															),
-															'，但是您选择的解析器不是 TikuAdapter，请选择 TikuAdapter 解析器，并填写接口地址即可，例如：http://localhost:8060/adapter-service/search，或者忽略此警告。'
-														]),
-														confirmButtonText: '切换至 TikuAdapter 解析器，并识别接口地址',
-														onConfirm() {
-															const origin = textarea.value.match(/http:\/\/(.+)\/adapter-service\/search/)?.[1] || '';
-															textarea.value = `http://${origin}/adapter-service/search`;
-															select.value = 'TikuAdapter';
-														}
+																'https://github.com/DokiDoki1103/tikuAdapter#readme'
+															)
+														])
 													});
 													return;
 												}
-
-												try {
-													const awsResult: AnswererWrapper[] = [];
-													if (select.value === 'TikuAdapter') {
-														if (value.startsWith('http') === false) {
-															$modal.alert({
-																content: h('div', [
-																	'格式错误，TikuAdapter解析器只能解析 url 链接，请重新输入！或者查看：',
-																	h(
-																		'a',
-																		{ href: 'https://github.com/DokiDoki1103/tikuAdapter#readme' },
-																		'https://github.com/DokiDoki1103/tikuAdapter#readme'
-																	)
-																])
-															});
-															return;
+												select.value = '默认';
+												awsResult.push({
+													name: 'TikuAdapter题库',
+													url: value,
+													homepage: 'https://github.com/DokiDoki1103/tikuAdapter',
+													method: 'post',
+													type: 'GM_xmlhttpRequest',
+													contentType: 'json',
+													headers: {},
+													data: {
+														// eslint-disable-next-line no-template-curly-in-string
+														question: '${title}',
+														options: {
+															handler: "return (env)=>env.options?.split('\\n')"
+														},
+														type: {
+															handler:
+																" return (env)=> env.type === 'single' ? 0 : env.type === 'multiple' ? 1 : env.type === 'completion' ? 3 : env.type === 'judgement' ? 4 : undefined"
 														}
-														select.value = '默认';
-														awsResult.push({
-															name: 'TikuAdapter题库',
-															url: value,
-															homepage: 'https://github.com/DokiDoki1103/tikuAdapter',
-															method: 'post',
-															type: 'GM_xmlhttpRequest',
-															contentType: 'json',
-															headers: {},
-															data: {
-																// eslint-disable-next-line no-template-curly-in-string
-																question: '${title}',
-																options: {
-																	handler: "return (env)=>env.options?.split('\\n')"
-																},
-																type: {
-																	handler:
-																		" return (env)=> env.type === 'single' ? 0 : env.type === 'multiple' ? 1 : env.type === 'completion' ? 3 : env.type === 'judgement' ? 4 : undefined"
-																}
-															},
-															handler: "return (res)=>res.answer.allAnswer.map(i=>([res.question,i.join('#')]))"
-														});
-													} else {
-														const contents = value
-															.split('###')
-															.map((i) => i.trim())
-															.filter(Boolean);
-														for (const content of contents) {
-															awsResult.push(...(await AnswerWrapperParser.from(content)));
-														}
-													}
-
-													await applyAws(awsResult);
-												} catch (e: any) {
-													$modal.alert({
-														content: h('div', [h('div', '解析失败，原因如下 :'), h('div', e.message)])
-													});
+													},
+													handler: "return (res)=>res.answer.allAnswer.map(i=>([res.question,i.join('#')]))"
+												});
+											} else {
+												const contents = value
+													.split('###')
+													.map((i) => i.trim())
+													.filter(Boolean);
+												for (const content of contents) {
+													awsResult.push(...(await AnswerWrapperParser.from(content)));
 												}
-											};
-										})
-									])
-								])
-							]);
+											}
+
+											await applyAws(awsResult);
+										} catch (e: any) {
+											$modal.alert({
+												content: h('div', [h('div', '解析失败，原因如下 :'), h('div', e.message)])
+											});
+										}
+									};
+								})
+							];
+
+							manualButtons.replaceChildren(...manualButtonList);
+							manualFooter.appendChild(manualButtons);
+
+							/** AI 大模型配置面板容器（懒加载：切到「AI 大模型」解析器时才创建表单） */
+							const llmPanel = h('div', {
+								style: {
+									display: 'none',
+									// 表单较高：限制高度并允许内部滚动，避免弹窗底部超出视口导致按钮点不到
+									maxHeight: 'max(160px, calc(100vh - 360px))',
+									overflowY: 'auto',
+									overflowX: 'hidden',
+									paddingRight: '4px'
+								}
+							});
+							manualFooter.appendChild(llmPanel);
+							let llmForm: ReturnType<typeof createLLMAnswererForm> | undefined;
+							/** 表单构造失败时展示的错误块（替换旧的，避免重复堆叠） */
+							let llmFormError: HTMLElement | undefined;
+							/** 切回非 AI 模式时恢复的文本框内容（切到 AI 模式会清空文本框，避免误存 LLM 配置） */
+							let textareaBackup = '';
+
+							/** 从 settings 中取出已保存的 LLM 配置（用于回填表单） */
+							const readSavedLLMValue = () => {
+								const aws: any[] = CommonProject.scripts.settings.cfg.answererWrappers || [];
+								const saved = aws.find(isLLMWrapper);
+								return saved ? parseLLMWrapper(saved) : undefined;
+							};
+
+							/**
+							 * 连接测试：用当前表单内容真实发起一次请求（含图片/占位符），成功返回结果供预览。
+							 * 失败时抛出带中文说明的错误，交由表单展示。
+							 */
+							const llmTest = async (value: LLMAnswererFormValue) => {
+								const wrapper = buildLLMWrapper({
+									...value,
+									presetId: value.presetId === 'custom' ? 'openai' : value.presetId
+								});
+								const { env } = await buildAnswererEnv({
+									type: 'single',
+									title: '1 + 1 = ?',
+									options: 'A. 1\nB. 2\nC. 3\nD. 4',
+									titleImages: [],
+									optionsImages: [],
+									enableImageOptimize: value.images
+								});
+								try {
+									const result = await requestLLMAnswerer(wrapper, { env, timeout: 20 });
+									return result;
+								} catch (e: any) {
+									if (e instanceof LLMRequestError) {
+										throw new Error(
+											`接口返回 HTTP ${e.status}，请检查地址、模型名与 API Key（若为 404/405 请确认接口格式是否选对）。`
+										);
+									}
+									throw new Error(e?.message || '大模型连接失败，请检查网络、地址与 API Key。');
+								}
+							};
+
+							/** 按当前 settings 中的 LLM 配置重建表单（保存后同步最新值） */
+							const refreshLLMForm = () => {
+								llmForm?.el.remove();
+								llmFormError?.remove();
+								llmFormError = undefined;
+								llmForm = createLLMAnswererForm(readSavedLLMValue(), {
+									onSave: async (value) => {
+										try {
+											const wrapper = buildLLMWrapper({
+												...value,
+												presetId: value.presetId === 'custom' ? 'openai' : value.presetId
+											});
+											const current: any[] = CommonProject.scripts.settings.cfg.answererWrappers || [];
+											const awsResult: AnswererWrapper[] = [...current.filter((aw) => !isLLMWrapper(aw)), wrapper];
+											// 复用一键获取/手动配置的保存流程：唯一化、上限10、安全确认、白名单检测、变更事件
+											const saved = await applyAws(awsResult, false);
+											if (saved) {
+												safeRefreshLLMForm();
+											}
+											return saved;
+										} catch (e: any) {
+											$modal.alert({
+												content: h('div', [h('div', '保存失败，原因如下 :'), h('div', e?.message ?? '')])
+											});
+											return false;
+										}
+									},
+									onClear: () => {
+										$modal.confirm({
+											content: '确定要清空 AI 大模型配置吗？',
+											onConfirm: () => {
+												const current: any[] = CommonProject.scripts.settings.cfg.answererWrappers || [];
+												const rest = current.filter((aw) => !isLLMWrapper(aw));
+												CommonProject.scripts.settings.cfg.answererWrappers = rest;
+												// 同步设置按钮文案，与 applyAws / clearAnswererConfig 的写法保持一致
+												this.value = rest.length ? '当前有' + rest.length + '个可用题库' : '点击配置';
+												$message.success({ content: '已清空 AI 大模型配置。' });
+												safeRefreshLLMForm();
+											}
+										});
+									},
+									onTest: async (value, pending) => {
+										pending(true);
+										try {
+											const result = await llmTest(value);
+											return result;
+										} finally {
+											pending(false);
+										}
+									}
+								});
+								llmForm.el.style.marginTop = '12px';
+								llmPanel.appendChild(llmForm.el);
+							};
+
+							/** 表单构造失败时把错误渲染进面板（替换旧错误块） */
+							const showLLMFormError = (e: any) => {
+								llmForm = undefined;
+								llmFormError?.remove();
+								llmFormError = h(
+									'div',
+									{ style: { marginTop: '12px', color: '#f56c6c', fontSize: '13px', wordBreak: 'break-all' } },
+									[
+										h('div', 'AI 大模型配置界面加载失败，请把下面这段信息反馈给开发者：'),
+										h('div', { style: { marginTop: '4px', color: '#909399' } }, [String(e?.stack || e?.message || e)])
+									]
+								);
+								llmPanel.appendChild(llmFormError);
+							};
+
+							/**
+							 * 重建表单，失败时展示错误而不是抛给调用方。
+							 * change 事件监听器里抛出的异常会被浏览器事件系统吞掉（不会冒泡到调用方），
+							 * 界面表现就是「选了 AI 大模型但什么都没出现」，因此这里必须自行兜底。
+							 */
+							const safeRefreshLLMForm = () => {
+								try {
+									refreshLLMForm();
+								} catch (e: any) {
+									showLLMFormError(e);
+								}
+							};
+
+							/** 解析器切换：AI 大模型 显示配置表单并隐藏文本框/按钮，其它解析器相反 */
+							function syncLLMPanel() {
+								const isLLM = select.value === 'AI 大模型';
+								if (isLLM) {
+									if (!llmForm) {
+										safeRefreshLLMForm();
+									}
+									if (textarea.value) {
+										textareaBackup = textarea.value;
+										textarea.value = '';
+									}
+									textarea.style.display = 'none';
+									manualButtons.style.display = 'none';
+									llmPanel.style.display = '';
+								} else {
+									if (textareaBackup && !textarea.value) {
+										textarea.value = textareaBackup;
+										textareaBackup = '';
+									}
+									textarea.style.display = '';
+									manualButtons.style.display = 'flex';
+									llmPanel.style.display = 'none';
+								}
+							}
+							// select 可能被 tooltip 包裹，监听冒泡的 change 事件以兼容两种结构
+							select.addEventListener('change', syncLLMPanel);
+							syncLLMPanel();
 
 							/** 弹窗内容与底部：官方题库（主按钮默认）= 一键获取；自定义题库（「⋯」下拉进入）= 手动配置 */
 							let modalContent: string | HTMLElement;

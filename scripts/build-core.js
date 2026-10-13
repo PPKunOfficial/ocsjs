@@ -92,7 +92,18 @@ async function createUserJs() {
 				icon: 'https://cdn.ocsjs.com/logo.png',
 				connect: ['enncy.cn', 'icodef.com', 'ocsjs.com', 'zaizhexue.top', 'localhost', '127.0.0.1',
 					// 智慧树阿里云资源，应用： 图片题资源访问
-					'aliyuncs.com'],
+					'aliyuncs.com',
+					// AI 大模型答题（内置预设的接口域名，自定义地址请使用「全域名通用版」或自行添加 @connect）
+					'api.openai.com',
+					'api.anthropic.com',
+					'api.deepseek.com',
+					'api.moonshot.cn',
+					'open.bigmodel.cn',
+					'dashscope.aliyuncs.com',
+					'generativelanguage.googleapis.com',
+					// System One（Jev）类模型：TypeSafe 与 DigitalOcean 官方接口
+					'api.typesafe.ai',
+					'inference.do-ai.run'],
 				match: matchMetadata,
 				grant: [
 					'GM_info',

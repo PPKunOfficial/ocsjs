@@ -1,10 +1,13 @@
 import { AnswererWrapper, SearchInformation, Result } from './interface';
 import { request } from '../utils/request';
 import { $ } from '../../utils';
+import { buildLLMSearchInformation, requestLLMAnswerer } from './llm-answerer.adapter';
 
 export const AnswerWrapperHandlerConfig = {
 	// 超时时间，单位毫秒
-	timeout_seconds: 60
+	timeout_seconds: 60,
+	// 默认最大输出 token 数（LLM 答题使用）
+	max_tokens: 512
 };
 
 /**
@@ -102,6 +105,29 @@ export async function defaultAnswerWrapperHandler(
 				}
 			}
 			try {
+				/**
+				 * LLM 答题分支：wrapper.llm 存在时走大模型请求，
+				 * 忽略 data / handler 等传统题库字段（仅 url 用于连接探测与白名单校验）。
+				 * 返回的 SearchInformation.results 中 answer 为归一化后的答案文本，
+				 * 交由既有的答案匹配器（resolvers）解析。
+				 */
+				if (wrapper.llm) {
+					const timeoutSeconds = wrapper.timeout ?? AnswerWrapperHandlerConfig.timeout_seconds ?? 60;
+					const llmResult = await Promise.race([
+						requestLLMAnswerer(wrapper, {
+							env,
+							timeout: timeoutSeconds,
+							defaultMaxTokens: AnswerWrapperHandlerConfig.max_tokens
+						}),
+						$.sleep(timeoutSeconds * 1000)
+					]);
+					if (llmResult === undefined) {
+						throw new Error('大模型请求超时，可能是模型响应过慢（思考模型耗时较长），或请检查网络/代理后重试。');
+					}
+					searchInfos.push(buildLLMSearchInformation(wrapper, llmResult, env));
+					return;
+				}
+
 				// 答案列表
 				let results: Result[] = [];
 				// 请求数据

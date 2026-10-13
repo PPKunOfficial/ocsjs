@@ -362,6 +362,15 @@ const IMAGE_ENV_REF_PATTERN = /(^|[^\w$])(images|suggestion_title|suggestion_opt
  * 旧配置（只读 ${title} / ${options}）不会上传新增字段，因此即便返回 false 也是安全的。
  */
 export function isAnswererWrapperSupportImageOptimize(wrapper: AnswererWrapper): boolean {
+	// LLM 答题配置：图片是否上传完全由 llm.images 决定（data/handler 不参与），
+	// 无需检查占位符，直接按开关判定。
+	if (wrapper && wrapper.llm) {
+		// System One（Jev）只接受文本题目，不支持图片输入，无论开关如何都按不支持图片处理。
+		if (wrapper.llm.apiFormat === 'systemone') {
+			return false;
+		}
+		return !!wrapper.llm.images;
+	}
 	if (!wrapper || String(wrapper.method || 'get').toLowerCase() !== 'post') {
 		return false;
 	}
