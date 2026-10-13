@@ -32,12 +32,23 @@ export interface LLMAnswererFormHandlers {
 	 * - 抛异常时表单展示 e.message（中文）。
 	 */
 	onTest: (value: LLMAnswererFormValue, pending: (loading: boolean) => void) => Promise<LLMAnswererResult | void>;
+	/**
+	 * 关闭弹窗：AI 大模型模式下，底部按钮行整体换成表单自己的按钮行（见 LLMAnswererForm.footer），
+	 * 因此「关闭」按钮由表单提供，调用方只需在这里关掉弹窗容器。
+	 */
+	onClose: () => void;
 }
 
 /** LLM 答题配置表单实例 */
 export interface LLMAnswererForm {
-	/** 整个表单（含自己的「测试连接 / 保存配置 / 清空题库配置」按钮） */
+	/** 表单字段区（含输入框与提示，不含按钮） */
 	el: HTMLElement;
+	/**
+	 * 表单自己的按钮行：「🗑️ 清空 AI 配置 / 🔌 测试连接 / 关闭 / 💾 保存配置」，
+	 * 由调用方放进弹窗底部按钮行，与普通题库模式的底部按钮保持同一样式与位置
+	 * （注意：该节点不在 el 内，需单独插入 DOM，否则按钮不会显示）。
+	 */
+	footer: HTMLElement;
 	/** 读取当前表单值（已做 trim 与数值兜底归一化） */
 	getValue: () => LLMAnswererFormValue;
 	/** 回填表单（编辑已保存配置 / 保存成功后回填归一化值），只需传需要修改的字段 */
@@ -232,9 +243,12 @@ export function createLLMAnswererForm(
 		placeholder: 'sk-...',
 		autocomplete: 'off'
 	});
-	const apiKeyToggle = el('button', { type: 'button', className: 'modal-cancel-button', style: FOOTER_BUTTON_STYLE }, [
-		'显示'
-	]);
+	// 字段内的行内小按钮，尺寸比底部按钮小一号（底部按钮统一放大到 4px 12px / 14px）
+	const apiKeyToggle = el(
+		'button',
+		{ type: 'button', className: 'modal-cancel-button', style: { padding: '2px 8px', fontSize: '12px' } },
+		['显示']
+	);
 	const apiKeyRow = el('div', { style: { display: 'flex', gap: '8px' } }, [
 		el('div', { style: { flex: '1' } }, [apiKeyInput]),
 		apiKeyToggle
@@ -360,10 +374,29 @@ export function createLLMAnswererForm(
 	const clearButton = el('button', { type: 'button', className: 'modal-cancel-button', style: FOOTER_BUTTON_STYLE }, [
 		'🗑️ 清空 AI 配置'
 	]);
+	/** 「关闭」按钮：与普通题库模式底部按钮同名同样式，保证两种模式看起来完全一致 */
+	const closeButton = el('button', { type: 'button', className: 'modal-cancel-button', style: FOOTER_BUTTON_STYLE }, [
+		'关闭'
+	]);
+	/**
+	 * 按钮行：由调用方放进弹窗底部，与普通题库模式的底部按钮行同一位置、同一布局
+	 * （清空类按钮靠左，其余靠右）。宽度撑满，便于操作按钮右对齐。
+	 */
+	clearButton.style.marginRight = 'auto';
 	const buttonRow = el(
 		'div',
-		{ style: { display: 'flex', flexWrap: 'wrap', justifyContent: 'flex-end', gap: '8px', marginTop: '4px' } },
-		[clearButton, testButton, saveButton]
+		{
+			style: {
+				display: 'flex',
+				flexWrap: 'wrap',
+				alignItems: 'center',
+				justifyContent: 'flex-end',
+				// 间距与官方题库面板底部（gap: 12px）保持一致，AI 模式与普通模式看起来完全同款
+				gap: '12px',
+				width: '100%'
+			}
+		},
+		[clearButton, testButton, closeButton, saveButton]
 	);
 
 	// ============================ 可见性联动 ============================
@@ -607,6 +640,7 @@ export function createLLMAnswererForm(
 	};
 
 	clearButton.onclick = () => handlers.onClear();
+	closeButton.onclick = () => handlers.onClose();
 
 	const setTestPending = (loading: boolean) => {
 		testButton.disabled = loading;
@@ -695,8 +729,7 @@ export function createLLMAnswererForm(
 		effortRow,
 		budgetRow,
 		fallbackRow,
-		advancedSection,
-		buttonRow
+		advancedSection
 	]);
 
 	// 初始化：先应用默认预设，再用 initial 覆盖（initial 通常来自 parseLLMWrapper）
@@ -704,5 +737,5 @@ export function createLLMAnswererForm(
 	updateVisibility();
 	if (initial) setValue(initial);
 
-	return { el: root, getValue, setValue, setStatus };
+	return { el: root, footer: buttonRow, getValue, setValue, setStatus };
 }

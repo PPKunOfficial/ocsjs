@@ -1643,10 +1643,14 @@ async function main() {
 				MISSING.push(`llm-answerer-ui 模块导入失败：${err?.message ?? err}`);
 			}
 			if (ui && typeof ui.createLLMAnswererForm === 'function') {
+				let closeCalls = 0;
 				const handlers = {
 					onSave: async () => true,
 					onClear: () => undefined,
-					onTest: async () => undefined
+					onTest: async () => undefined,
+					onClose: () => {
+						closeCalls++;
+					}
 				};
 				/**
 				 * 关键回归：真实浏览器里 HTMLInputElement.list 是只有 getter 的只读 IDL 属性，
@@ -1700,12 +1704,34 @@ async function main() {
 							}
 						}
 					});
-					check('K4 表单内全部按钮点击不抛异常', () => {
-						const buttons = form.el.querySelectorAll('button');
-						assert(buttons.length > 0, '表单内没有按钮');
-						for (const b of Array.from(buttons) as any[]) {
+					check('K4 表单与底部按钮行内全部按钮点击不抛异常', () => {
+						const buttons = [
+							...Array.from(form.el.querySelectorAll('button')),
+							...Array.from(form.footer.querySelectorAll('button'))
+						];
+						assert(buttons.length > 0, '表单与底部按钮行内没有按钮');
+						for (const b of buttons as any[]) {
 							b.click();
 						}
+					});
+					check('K5 按钮行独立于字段区（form.footer），且样式与普通题库底部按钮一致', () => {
+						assert(!!form.footer, '未返回 footer（按钮行）');
+						assert(!form.el.contains(form.footer), '按钮行不应嵌在字段区内（AI 模式下应由弹窗底部承载）');
+						const labels = Array.from(form.footer.querySelectorAll('button')).map((b: any) =>
+							(b.textContent || '').trim()
+						);
+						for (const want of ['🗑️ 清空 AI 配置', '🔌 测试连接', '关闭', '💾 保存配置']) {
+							assert(labels.includes(want), `按钮行缺少「${want}」，实际：${labels.join(' / ')}`);
+						}
+					});
+					check('K6 「关闭」按钮点击会调用 onClose（AI 模式下弹窗关得掉）', () => {
+						closeCalls = 0;
+						const closeBtn: any = Array.from(form.footer.querySelectorAll('button')).find(
+							(b: any) => (b.textContent || '').trim() === '关闭'
+						);
+						assert(!!closeBtn, '未找到「关闭」按钮');
+						closeBtn.click();
+						assert(closeCalls === 1, `「关闭」应触发一次 onClose，实际 ${closeCalls} 次`);
 					});
 				} finally {
 					if (hadOwn) Object.defineProperty(proto, 'list', hadOwn);
@@ -1794,12 +1820,12 @@ async function main() {
 	}
 
 	// ------------------------------------------------------------------ M
-	section('M. 源码级守卫 —— AI 大模型模式必须保留「关闭」按钮（用户反馈过弹窗关不掉）');
+	section('M. 源码级守卫 —— AI 模式底部按钮行必须始终可用（用户反馈过「关闭」消失 / 样式不统一）');
 	{
 		/**
 		 * 这一组是「源码级」守卫而非运行时 UI 测试：common.ts 依赖完整 OCS 运行时（$、CommonProject、
-		 * 弹窗容器），离线套件无法实例化。而当初的 bug 恰好是「一行 style.display = 'none'」把
-		 * 关闭按钮一起隐藏，用源码断言能精确锁死这个回归形态。
+		 * 弹窗容器），离线套件无法实例化。运行时那一半由 K5/K6 覆盖（表单按钮行含「关闭」且点击触发
+		 * onClose），这里只锁死集成方式，防止再次出现「整行隐藏按钮顺手把关闭也藏了」。
 		 */
 		const path = require('path');
 		const fsMod = require('fs');
@@ -1814,25 +1840,39 @@ async function main() {
 		} else {
 			const start = src.indexOf('function syncLLMPanel()');
 			const end = src.indexOf("select.addEventListener('change', syncLLMPanel)", start);
-			const syncBody = start < 0 ? '' : src.slice(start, end > start ? end : start + 3000);
+			const syncRaw = start < 0 ? '' : src.slice(start, end > start ? end : start + 3000);
+			const elseAt = syncRaw.indexOf('} else {');
+			const aiBranch = elseAt < 0 ? syncRaw : syncRaw.slice(0, elseAt);
+			const plainBranch = elseAt < 0 ? '' : syncRaw.slice(elseAt);
 
-			check('M1 syncLLMPanel 不再整行隐藏按钮行（否则连「关闭」一起消失）', () => {
-				assert(syncBody.length > 0, '未找到 syncLLMPanel 函数体');
+			check('M1 AI 分支把表单自己的按钮行挂到弹窗底部（而不是隐藏整行/弄丢关闭）', () => {
+				assert(syncRaw.length > 0, '未找到 syncLLMPanel 函数体');
 				assert(
-					!/manualButtons\.style\.display\s*=\s*['"]none['"]/.test(syncBody),
-					'syncLLMPanel 仍会把整行按钮隐藏，AI 模式下「关闭」按钮会消失'
+					/manualButtons\.replaceChildren\(llmForm\.footer\)/.test(aiBranch),
+					'AI 模式下未把 llmForm.footer 挂到底部按钮行（底部会没有按钮，或只剩旧按钮）'
+				);
+				assert(
+					!/manualButtons\.style\.display\s*=\s*['"]none['"]/.test(syncRaw),
+					'syncLLMPanel 仍在整体隐藏按钮行，「关闭」会消失'
 				);
 			});
-			check('M2 AI 模式只隐藏「清空/保存」两颗，并保留「关闭」可见', () => {
-				assert(/manualClearButton\.style\.display\s*=\s*['"]none['"]/.test(syncBody), '未隐藏 manualClearButton');
-				assert(/manualSaveButton\.style\.display\s*=\s*['"]none['"]/.test(syncBody), '未隐藏 manualSaveButton');
-				assert(/manualCloseButton\.style\.display\s*=\s*['"]['"]/.test(src), '未显式保证 manualCloseButton 可见');
-			});
-			check('M3 「关闭」按钮已提取为独立引用并纳入按钮列表（不再匿名内联）', () => {
-				assert(/const manualCloseButton = h\('button', '关闭'/.test(src), '未找到 manualCloseButton 定义');
+			check('M2 切回普通题库模式时恢复原有三颗底部按钮', () => {
 				assert(
-					/manualButtonList: HTMLElement\[\] = \[manualClearButton, manualCloseButton, manualSaveButton\]/.test(src),
-					'manualButtonList 未收集三颗按钮引用'
+					/manualButtons\.replaceChildren\(\.\.\.manualButtonList\)/.test(plainBranch),
+					'切回普通模式未恢复 manualButtonList'
+				);
+			});
+			check('M3 表单重建后重新挂载按钮行（保存/清空后底部按钮不丢）', () => {
+				const refreshStart = src.indexOf('const refreshLLMForm = () => {');
+				const refreshEnd = src.indexOf('const showLLMFormError', refreshStart);
+				const refreshBody =
+					refreshStart < 0 ? '' : src.slice(refreshStart, refreshEnd > refreshStart ? refreshEnd : refreshStart + 6000);
+				assert(refreshBody.length > 0, '未找到 refreshLLMForm 函数体');
+				assert(
+					/select\.value === 'AI 大模型'[\s\S]{0,160}manualButtons\.replaceChildren\(llmForm\.footer\)/.test(
+						refreshBody
+					),
+					'refreshLLMForm 重建表单后未重新挂载按钮行'
 				);
 			});
 		}

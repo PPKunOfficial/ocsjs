@@ -759,9 +759,11 @@ export const CommonProject = Project.create({
 							/** 按当前 settings 中的 LLM 配置重建表单（保存后同步最新值） */
 							const refreshLLMForm = () => {
 								llmForm?.el.remove();
+								llmForm?.footer.remove();
 								llmFormError?.remove();
 								llmFormError = undefined;
 								llmForm = createLLMAnswererForm(readSavedLLMValue(), {
+									onClose: () => modal?.remove(),
 									onSave: async (value) => {
 										try {
 											const wrapper = buildLLMWrapper({
@@ -809,6 +811,10 @@ export const CommonProject = Project.create({
 								});
 								llmForm.el.style.marginTop = '12px';
 								llmPanel.appendChild(llmForm.el);
+								// 表单重建后按钮行是新节点：处于 AI 模式时需重新挂到弹窗底部（否则底部按钮会消失）
+								if (select.value === 'AI 大模型') {
+									manualButtons.replaceChildren(llmForm.footer);
+								}
 							};
 
 							/** 表单构造失败时把错误渲染进面板（替换旧错误块） */
@@ -852,12 +858,12 @@ export const CommonProject = Project.create({
 									}
 									textarea.style.display = 'none';
 									/**
-									 * 只隐藏被表单内按钮取代的两颗（清空题库配置 / 保存配置），
-									 * 「关闭」必须留在原位——否则 AI 模式下弹窗关不掉。
+									 * AI 大模型模式下整体换用表单自己的按钮行（🗑️ 清空 AI 配置 / 🔌 测试连接 / 关闭 / 💾 保存配置）：
+									 * 位置、样式与普通题库模式的底部按钮完全一致，且「关闭」始终在，弹窗关得掉。
 									 */
-									manualClearButton.style.display = 'none';
-									manualSaveButton.style.display = 'none';
-									manualCloseButton.style.display = '';
+									if (llmForm) {
+										manualButtons.replaceChildren(llmForm.footer);
+									}
 									llmPanel.style.display = '';
 								} else {
 									if (textareaBackup && !textarea.value) {
@@ -865,6 +871,8 @@ export const CommonProject = Project.create({
 										textareaBackup = '';
 									}
 									textarea.style.display = '';
+									// 切回普通题库模式：恢复原有的三颗底部按钮（清空题库配置 / 关闭 / 保存配置）
+									manualButtons.replaceChildren(...manualButtonList);
 									manualClearButton.style.display = '';
 									manualSaveButton.style.display = '';
 									manualCloseButton.style.display = '';
