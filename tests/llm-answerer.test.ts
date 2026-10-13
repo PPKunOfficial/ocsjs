@@ -1793,6 +1793,51 @@ async function main() {
 		}
 	}
 
+	// ------------------------------------------------------------------ M
+	section('M. 源码级守卫 —— AI 大模型模式必须保留「关闭」按钮（用户反馈过弹窗关不掉）');
+	{
+		/**
+		 * 这一组是「源码级」守卫而非运行时 UI 测试：common.ts 依赖完整 OCS 运行时（$、CommonProject、
+		 * 弹窗容器），离线套件无法实例化。而当初的 bug 恰好是「一行 style.display = 'none'」把
+		 * 关闭按钮一起隐藏，用源码断言能精确锁死这个回归形态。
+		 */
+		const path = require('path');
+		const fsMod = require('fs');
+		let src = '';
+		try {
+			src = fsMod.readFileSync(path.join(process.cwd(), 'packages/scripts/src/projects/common.ts'), 'utf8');
+		} catch {
+			src = '';
+		}
+		if (!src) {
+			skipCheck('M 组', '读取 packages/scripts/src/projects/common.ts 失败（请在仓库根目录运行）');
+		} else {
+			const start = src.indexOf('function syncLLMPanel()');
+			const end = src.indexOf("select.addEventListener('change', syncLLMPanel)", start);
+			const syncBody = start < 0 ? '' : src.slice(start, end > start ? end : start + 3000);
+
+			check('M1 syncLLMPanel 不再整行隐藏按钮行（否则连「关闭」一起消失）', () => {
+				assert(syncBody.length > 0, '未找到 syncLLMPanel 函数体');
+				assert(
+					!/manualButtons\.style\.display\s*=\s*['"]none['"]/.test(syncBody),
+					'syncLLMPanel 仍会把整行按钮隐藏，AI 模式下「关闭」按钮会消失'
+				);
+			});
+			check('M2 AI 模式只隐藏「清空/保存」两颗，并保留「关闭」可见', () => {
+				assert(/manualClearButton\.style\.display\s*=\s*['"]none['"]/.test(syncBody), '未隐藏 manualClearButton');
+				assert(/manualSaveButton\.style\.display\s*=\s*['"]none['"]/.test(syncBody), '未隐藏 manualSaveButton');
+				assert(/manualCloseButton\.style\.display\s*=\s*['"]['"]/.test(src), '未显式保证 manualCloseButton 可见');
+			});
+			check('M3 「关闭」按钮已提取为独立引用并纳入按钮列表（不再匿名内联）', () => {
+				assert(/const manualCloseButton = h\('button', '关闭'/.test(src), '未找到 manualCloseButton 定义');
+				assert(
+					/manualButtonList: HTMLElement\[\] = \[manualClearButton, manualCloseButton, manualSaveButton\]/.test(src),
+					'manualButtonList 未收集三颗按钮引用'
+				);
+			});
+		}
+	}
+
 	// ---------------------------------------------------------------- 汇总
 	console.log('\n================ 分组统计 ================');
 	for (const [name, s] of Object.entries(groups)) {

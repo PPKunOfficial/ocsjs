@@ -578,120 +578,125 @@ export const CommonProject = Project.create({
 								])
 							]);
 
-							/** 手动配置底部按钮行：清空题库配置左对齐，关闭/保存配置右对齐（AI 模式下改用表单内按钮） */
+							/** 手动配置底部按钮行：清空题库配置左对齐，关闭/保存配置右对齐（AI 模式下隐藏清空/保存，但「关闭」始终保留） */
 							const manualButtons = h('div', {
 								style: { display: 'flex', flexWrap: 'wrap', justifyContent: 'flex-end' }
 							});
-							const manualButtonList: HTMLElement[] = [
-								h('button', '清空题库配置', (btn) => {
-									btn.className = 'modal-cancel-button';
-									enlargeFooterButton(btn);
-									btn.style.marginRight = 'auto';
-									btn.onclick = () => clearAnswererConfig();
-								}),
-								h('button', '关闭', (btn) => {
-									btn.className = 'modal-cancel-button';
-									enlargeFooterButton(btn);
-									btn.style.marginRight = '12px';
-									btn.onclick = () => modal?.remove();
-								}),
-								h('button', '保存配置', (btn) => {
-									btn.className = 'modal-confirm-button';
-									enlargeFooterButton(btn);
-									btn.onclick = async () => {
-										const value = textarea.value;
+							/**
+							 * 「清空题库配置」按钮：AI 大模型模式下由表单自身的清空按钮取代，故持有引用以便单独隐藏。
+							 * 注意：绝不能整行隐藏这些按钮，否则 AI 模式下连「关闭」一起消失，用户无法关闭弹窗。
+							 */
+							const manualClearButton = h('button', '清空题库配置', (btn) => {
+								btn.className = 'modal-cancel-button';
+								enlargeFooterButton(btn);
+								btn.style.marginRight = 'auto';
+								btn.onclick = () => clearAnswererConfig();
+							});
+							/** 「关闭」按钮：任何解析器下都必须可见（AI 大模型模式也保留），不参与隐藏 */
+							const manualCloseButton = h('button', '关闭', (btn) => {
+								btn.className = 'modal-cancel-button';
+								enlargeFooterButton(btn);
+								btn.style.marginRight = '12px';
+								btn.onclick = () => modal?.remove();
+							});
+							/** 「保存配置」按钮：AI 大模型模式下由表单自身的保存按钮取代 */
+							const manualSaveButton = h('button', '保存配置', (btn) => {
+								btn.className = 'modal-confirm-button';
+								enlargeFooterButton(btn);
+								btn.onclick = async () => {
+									const value = textarea.value;
 
-										if (select.value === 'AI 大模型') {
-											$modal.alert({
-												content: h('div', [
-													'当前解析器为 ',
-													h('b', 'AI 大模型'),
-													'，请使用下方「💾 保存配置」按钮保存，或切换解析器后再保存文本框内容。'
-												])
-											});
-											return;
-										}
+									if (select.value === 'AI 大模型') {
+										$modal.alert({
+											content: h('div', [
+												'当前解析器为 ',
+												h('b', 'AI 大模型'),
+												'，请使用下方「💾 保存配置」按钮保存，或切换解析器后再保存文本框内容。'
+											])
+										});
+										return;
+									}
 
-										if (!value) {
-											$modal.alert({
-												content: h('div', '不能为空！')
-											});
-											return;
-										}
-										if (value.includes('adapter-service/search') && (select.value === 'TikuAdapter') === false) {
-											$modal.alert({
-												content: h('div', [
-													'检测到您可能正在使用 ',
-													h('a', { href: 'https://github.com/DokiDoki1103/tikuAdapter#readme' }, 'TikuAdapter 题库'),
-													'，但是您选择的解析器不是 TikuAdapter，请选择 TikuAdapter 解析器，并填写接口地址即可，例如：http://localhost:8060/adapter-service/search，或者忽略此警告。'
-												]),
-												confirmButtonText: '切换至 TikuAdapter 解析器，并识别接口地址',
-												onConfirm() {
-													const origin = textarea.value.match(/http:\/\/(.+)\/adapter-service\/search/)?.[1] || '';
-													textarea.value = `http://${origin}/adapter-service/search`;
-													select.value = 'TikuAdapter';
-												}
-											});
-											return;
-										}
-
-										try {
-											const awsResult: AnswererWrapper[] = [];
-											if (select.value === 'TikuAdapter') {
-												if (value.startsWith('http') === false) {
-													$modal.alert({
-														content: h('div', [
-															'格式错误，TikuAdapter解析器只能解析 url 链接，请重新输入！或者查看：',
-															h(
-																'a',
-																{ href: 'https://github.com/DokiDoki1103/tikuAdapter#readme' },
-																'https://github.com/DokiDoki1103/tikuAdapter#readme'
-															)
-														])
-													});
-													return;
-												}
-												select.value = '默认';
-												awsResult.push({
-													name: 'TikuAdapter题库',
-													url: value,
-													homepage: 'https://github.com/DokiDoki1103/tikuAdapter',
-													method: 'post',
-													type: 'GM_xmlhttpRequest',
-													contentType: 'json',
-													headers: {},
-													data: {
-														// eslint-disable-next-line no-template-curly-in-string
-														question: '${title}',
-														options: {
-															handler: "return (env)=>env.options?.split('\\n')"
-														},
-														type: {
-															handler:
-																" return (env)=> env.type === 'single' ? 0 : env.type === 'multiple' ? 1 : env.type === 'completion' ? 3 : env.type === 'judgement' ? 4 : undefined"
-														}
-													},
-													handler: "return (res)=>res.answer.allAnswer.map(i=>([res.question,i.join('#')]))"
-												});
-											} else {
-												const contents = value
-													.split('###')
-													.map((i) => i.trim())
-													.filter(Boolean);
-												for (const content of contents) {
-													awsResult.push(...(await AnswerWrapperParser.from(content)));
-												}
+									if (!value) {
+										$modal.alert({
+											content: h('div', '不能为空！')
+										});
+										return;
+									}
+									if (value.includes('adapter-service/search') && (select.value === 'TikuAdapter') === false) {
+										$modal.alert({
+											content: h('div', [
+												'检测到您可能正在使用 ',
+												h('a', { href: 'https://github.com/DokiDoki1103/tikuAdapter#readme' }, 'TikuAdapter 题库'),
+												'，但是您选择的解析器不是 TikuAdapter，请选择 TikuAdapter 解析器，并填写接口地址即可，例如：http://localhost:8060/adapter-service/search，或者忽略此警告。'
+											]),
+											confirmButtonText: '切换至 TikuAdapter 解析器，并识别接口地址',
+											onConfirm() {
+												const origin = textarea.value.match(/http:\/\/(.+)\/adapter-service\/search/)?.[1] || '';
+												textarea.value = `http://${origin}/adapter-service/search`;
+												select.value = 'TikuAdapter';
 											}
+										});
+										return;
+									}
 
-											await applyAws(awsResult);
-										} catch (e: any) {
-											$modal.alert({
-												content: h('div', [h('div', '解析失败，原因如下 :'), h('div', e.message)])
+									try {
+										const awsResult: AnswererWrapper[] = [];
+										if (select.value === 'TikuAdapter') {
+											if (value.startsWith('http') === false) {
+												$modal.alert({
+													content: h('div', [
+														'格式错误，TikuAdapter解析器只能解析 url 链接，请重新输入！或者查看：',
+														h(
+															'a',
+															{ href: 'https://github.com/DokiDoki1103/tikuAdapter#readme' },
+															'https://github.com/DokiDoki1103/tikuAdapter#readme'
+														)
+													])
+												});
+												return;
+											}
+											select.value = '默认';
+											awsResult.push({
+												name: 'TikuAdapter题库',
+												url: value,
+												homepage: 'https://github.com/DokiDoki1103/tikuAdapter',
+												method: 'post',
+												type: 'GM_xmlhttpRequest',
+												contentType: 'json',
+												headers: {},
+												data: {
+													// eslint-disable-next-line no-template-curly-in-string
+													question: '${title}',
+													options: {
+														handler: "return (env)=>env.options?.split('\\n')"
+													},
+													type: {
+														handler:
+															" return (env)=> env.type === 'single' ? 0 : env.type === 'multiple' ? 1 : env.type === 'completion' ? 3 : env.type === 'judgement' ? 4 : undefined"
+													}
+												},
+												handler: "return (res)=>res.answer.allAnswer.map(i=>([res.question,i.join('#')]))"
 											});
+										} else {
+											const contents = value
+												.split('###')
+												.map((i) => i.trim())
+												.filter(Boolean);
+											for (const content of contents) {
+												awsResult.push(...(await AnswerWrapperParser.from(content)));
+											}
 										}
-									};
-								})
-							];
+
+										await applyAws(awsResult);
+									} catch (e: any) {
+										$modal.alert({
+											content: h('div', [h('div', '解析失败，原因如下 :'), h('div', e.message)])
+										});
+									}
+								};
+							});
+							const manualButtonList: HTMLElement[] = [manualClearButton, manualCloseButton, manualSaveButton];
 
 							manualButtons.replaceChildren(...manualButtonList);
 							manualFooter.appendChild(manualButtons);
@@ -846,7 +851,13 @@ export const CommonProject = Project.create({
 										textarea.value = '';
 									}
 									textarea.style.display = 'none';
-									manualButtons.style.display = 'none';
+									/**
+									 * 只隐藏被表单内按钮取代的两颗（清空题库配置 / 保存配置），
+									 * 「关闭」必须留在原位——否则 AI 模式下弹窗关不掉。
+									 */
+									manualClearButton.style.display = 'none';
+									manualSaveButton.style.display = 'none';
+									manualCloseButton.style.display = '';
 									llmPanel.style.display = '';
 								} else {
 									if (textareaBackup && !textarea.value) {
@@ -854,7 +865,9 @@ export const CommonProject = Project.create({
 										textareaBackup = '';
 									}
 									textarea.style.display = '';
-									manualButtons.style.display = 'flex';
+									manualClearButton.style.display = '';
+									manualSaveButton.style.display = '';
+									manualCloseButton.style.display = '';
 									llmPanel.style.display = 'none';
 								}
 							}

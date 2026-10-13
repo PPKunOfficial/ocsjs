@@ -358,7 +358,7 @@ export function createLLMAnswererForm(
 		'💾 保存配置'
 	]);
 	const clearButton = el('button', { type: 'button', className: 'modal-cancel-button', style: FOOTER_BUTTON_STYLE }, [
-		'🗑️ 清空题库配置'
+		'🗑️ 清空 AI 配置'
 	]);
 	const buttonRow = el(
 		'div',
